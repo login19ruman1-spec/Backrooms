@@ -1,0 +1,14 @@
+name: Backrooms
+version: '2.1.0'
+main: ru.backrooms.BackroomsPlugin
+api-version: '1.21'
+description: Procedural Backrooms for an existing flat world
+commands:
+  backrooms:
+    description: Управление Backrooms
+    usage: /br <generate|stop|level|info>
+    aliases: [br]
+permissions:
+  backrooms.admin:
+    description: Управление генерацией Backrooms
+    default: op
