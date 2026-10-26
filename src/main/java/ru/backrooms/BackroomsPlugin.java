@@ -23,6 +23,7 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
     private final Set<String> builtChunks = new HashSet<>();
     private final Map<UUID, Location> returnLocations = new HashMap<>();
     private final Map<UUID, String> returnWorlds = new HashMap<>();
+    private final Map<UUID, Long> portalCooldowns = new HashMap<>();
 
     @Override
     public void onEnable() {
@@ -197,6 +198,10 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
             world.getBlockAt(lx, ceilingY, lz).setType(level == 2 ? Material.REDSTONE_LAMP : Material.SEA_LANTERN, false);
         }
 
+        // Add deterministic room variations: partial partitions, pillars, carpet patches and clutter.
+        // Every chunk gets a different layout while keeping a walkable route through the room.
+        decorateRoom(world, baseX, baseZ, level, random, wall, floor);
+
         // Put a physical portal in the hub chunk for each level.
         int hubX = originX + level * levelSpacing;
         int hubChunkX = Math.floorDiv(hubX, 16);
@@ -234,23 +239,96 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
                 && event.getFrom().getBlockY() == event.getTo().getBlockY()
                 && event.getFrom().getBlockZ() == event.getTo().getBlockZ()) return;
 
-        Material atFeet = event.getTo().getBlock().getType();
-        Material belowFeet = event.getTo().clone().subtract(0, 1, 0).getBlock().getType();
-        if (atFeet != Material.PURPLE_STAINED_GLASS && belowFeet != Material.PURPLE_STAINED_GLASS) return;
+        // Portals are vertical glass panels, so check feet, head and the block below,
+        // not only the block at the player's feet.
+        Location to = event.getTo();
+        // Stained glass is solid, so the player cannot enter the portal block itself.
+        // Detect the portal surface in a small radius around the player instead.
+        boolean nearPortal = false;
+        int px = to.getBlockX(), py = to.getBlockY(), pz = to.getBlockZ();
+        for (int ox = -1; ox <= 1 && !nearPortal; ox++) {
+            for (int oy = 0; oy <= 1 && !nearPortal; oy++) {
+                for (int oz = -1; oz <= 1; oz++) {
+                    if (player.getWorld().getBlockAt(px + ox, py + oy, pz + oz).getType() == Material.PURPLE_STAINED_GLASS) {
+                        nearPortal = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!nearPortal) return;
 
-        int currentLevel = getLevelAt(event.getTo().getBlockX(), event.getTo().getBlockZ());
+        long now = System.currentTimeMillis();
+        Long last = portalCooldowns.get(player.getUniqueId());
+        if (last != null && now - last < 1500) return;
+        portalCooldowns.put(player.getUniqueId(), now);
+
+        int currentLevel = getLevelAt(to.getBlockX(), to.getBlockZ());
         int nextLevel = (currentLevel + 1) % 3;
         World world = Bukkit.getWorld(worldName);
         if (world == null) return;
 
-        int targetX = originX + nextLevel * levelSpacing + 5;
-        int targetZ = originZ + 5;
-        Location target = new Location(world, targetX + 0.5, floorY + 1, targetZ + 0.5);
-        buildAround(target);
-        buildChunk(world, Math.floorDiv(targetX, 16), Math.floorDiv(targetZ, 16));
-        buildPortal(world, originX + nextLevel * levelSpacing + 2, originZ + 2, nextLevel);
+        int hubX = originX + nextLevel * levelSpacing;
+        int hubZ = originZ;
+        int chunkX = Math.floorDiv(hubX + 2, 16);
+        int chunkZ = Math.floorDiv(hubZ + 2, 16);
+        buildAround(new Location(world, hubX + 3.5, floorY + 1, hubZ + 5.5));
+        buildChunk(world, chunkX, chunkZ);
+        buildPortal(world, hubX + 2, hubZ + 2, nextLevel);
+
+        // Place the player in front of the destination portal, facing into the room.
+        Location target = new Location(world, hubX + 3.5, floorY + 1, hubZ + 5.5, 0f, 0f);
+        target.getBlock().setType(Material.AIR, false);
+        target.clone().add(0, 1, 0).getBlock().setType(Material.AIR, false);
         player.teleport(target);
         player.sendMessage(ChatColor.LIGHT_PURPLE + "Портал перенёс тебя на уровень " + nextLevel + ".");
+    }
+
+    private void decorateRoom(World world, int baseX, int baseZ, int level, Random random, Material wall, Material floor) {
+        Material accent = switch (level) {
+            case 1 -> Material.IRON_BLOCK;
+            case 2 -> Material.POLISHED_BLACKSTONE_BRICKS;
+            default -> Material.BROWN_TERRACOTTA;
+        };
+        // One of several layout patterns per chunk. Keep a two-block-high passage clear.
+        int pattern = random.nextInt(6);
+        if (pattern == 0) {
+            int x = baseX + 4 + random.nextInt(5);
+            for (int z = baseZ + 3; z <= baseZ + 12; z++) {
+                if (z >= baseZ + 7 && z <= baseZ + 9) continue;
+                for (int y = floorY + 1; y < ceilingY; y++) world.getBlockAt(x, y, z).setType(wall, false);
+            }
+        } else if (pattern == 1) {
+            for (int x = baseX + 3; x <= baseX + 12; x++) {
+                if (x >= baseX + 7 && x <= baseX + 9) continue;
+                for (int y = floorY + 1; y < ceilingY - 1; y++) world.getBlockAt(x, y, baseZ + 5).setType(wall, false);
+            }
+        } else if (pattern == 2) {
+            for (int[] pos : new int[][]{{3,3},{12,3},{3,12},{12,12}}) {
+                for (int y = floorY + 1; y < ceilingY; y++) world.getBlockAt(baseX + pos[0], y, baseZ + pos[1]).setType(accent, false);
+            }
+        } else if (pattern == 3) {
+            Material carpet = level == 2 ? Material.RED_CARPET : (level == 1 ? Material.GRAY_CARPET : Material.YELLOW_CARPET);
+            int x0 = baseX + 4 + random.nextInt(3), z0 = baseZ + 4 + random.nextInt(3);
+            for (int x = x0; x < x0 + 4; x++) for (int z = z0; z < z0 + 4; z++) world.getBlockAt(x, floorY + 1, z).setType(carpet, false);
+        } else if (pattern == 4) {
+            // Low abandoned desk / cabinet cluster.
+            for (int x = baseX + 5; x <= baseX + 7; x++) {
+                world.getBlockAt(x, floorY + 1, baseZ + 10).setType(accent, false);
+                world.getBlockAt(x, floorY + 2, baseZ + 10).setType(Material.OAK_SLAB, false);
+            }
+        } else {
+            // A short L-shaped divider, with an opening to walk around it.
+            for (int z = baseZ + 4; z <= baseZ + 9; z++) for (int y = floorY + 1; y < ceilingY; y++) world.getBlockAt(baseX + 10, y, z).setType(wall, false);
+            for (int x = baseX + 6; x <= baseX + 10; x++) for (int y = floorY + 1; y < ceilingY; y++) world.getBlockAt(x, y, baseZ + 4).setType(wall, false);
+            for (int y = floorY + 1; y < ceilingY; y++) world.getBlockAt(baseX + 10, y, baseZ + 7).setType(Material.AIR, false);
+        }
+
+        // Small ceiling fixtures and occasional floor stains add visual variety.
+        if (random.nextBoolean()) {
+            int lx = baseX + 5 + random.nextInt(6), lz = baseZ + 5 + random.nextInt(6);
+            world.getBlockAt(lx, ceilingY, lz).setType(level == 2 ? Material.REDSTONE_LAMP : Material.SEA_LANTERN, false);
+        }
     }
 
     private boolean edgeOpen(int boundaryChunkX, int boundaryChunkZ, int axis) {
@@ -263,36 +341,89 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
 
     @EventHandler
     public void onBreak(BlockBreakEvent event) {
-        Player p = event.getPlayer();
-        if (!generationEnabled || !p.getWorld().getName().equalsIgnoreCase(worldName)) return;
-        Block b = event.getBlock();
-        if (b.getY() <= floorY || b.getY() >= ceilingY) {
+        Player player = event.getPlayer();
+        if (!generationEnabled || !player.getWorld().getName().equalsIgnoreCase(worldName)) return;
+        Block block = event.getBlock();
+        if (block.getY() <= floorY || block.getY() >= ceilingY) {
             event.setCancelled(true);
             return;
         }
-        Material type = b.getType();
-        if (type == Material.YELLOW_TERRACOTTA || type == Material.SMOOTH_STONE
-                || type == Material.DEEPSLATE_BRICKS || type == Material.GRAY_CONCRETE) {
-            event.setCancelled(true);
-            openWall(b);
-            p.sendMessage(ChatColor.GRAY + "За стеной открылся проход.");
-        }
+        if (!isWall(block.getType())) return;
+
+        // Only the block the player actually breaks is removed. If it is on an outer
+        // wall, generate a room immediately behind that single opening.
+        int localX = Math.floorMod(block.getX(), 16);
+        int localZ = Math.floorMod(block.getZ(), 16);
+        boolean edgeX = localX == 0 || localX == 15;
+        boolean edgeZ = localZ == 0 || localZ == 15;
+        // Interior dividers also reveal rooms; the generator infers the wall direction.
+        final Block broken = block;
+        Bukkit.getScheduler().runTask(this, () -> generateRoomBehind(broken));
+        player.sendMessage(ChatColor.GRAY + "За проломом появляется новая комната. Разрушается только выбранный блок.");
     }
 
-    private void openWall(Block b) {
-        // Carve a short corridor through the wall and a room beyond it.
+    private void generateRoomBehind(Block opening) {
+        World world = opening.getWorld();
         int dx = 0, dz = 0;
-        if (isWall(b.getRelative(1, 0, 0).getType()) || isWall(b.getRelative(-1, 0, 0).getType())) dz = 1;
-        else dx = 1;
-        for (int d = -1; d <= 9; d++) {
-            for (int w = -2; w <= 2; w++) {
+        int localX = Math.floorMod(opening.getX(), 16);
+        int localZ = Math.floorMod(opening.getZ(), 16);
+        if (localX == 0) dx = -1;
+        else if (localX == 15) dx = 1;
+        else if (localZ == 0) dz = -1;
+        else if (localZ == 15) dz = 1;
+        else {
+            // Infer the direction perpendicular to an interior wall from its neighbours.
+            boolean alongX = isWall(opening.getRelative(-1, 0, 0).getType())
+                    || isWall(opening.getRelative(1, 0, 0).getType());
+            boolean alongZ = isWall(opening.getRelative(0, 0, -1).getType())
+                    || isWall(opening.getRelative(0, 0, 1).getType());
+            if (alongX && !alongZ) dz = 1;
+            else if (alongZ && !alongX) dx = 1;
+            else if (alongX) dz = 1;
+            else dx = 1;
+        }
+
+        int level = getLevelAt(opening.getX(), opening.getZ());
+        Random random = new Random(hash(opening.getX(), opening.getZ(), level + 71));
+        Material floor = switch (level) {
+            case 1 -> Material.GRAY_CONCRETE;
+            case 2 -> Material.POLISHED_DEEPSLATE;
+            default -> Material.YELLOW_CARPET;
+        };
+        Material wall = switch (level) {
+            case 1 -> Material.SMOOTH_STONE;
+            case 2 -> Material.DEEPSLATE_BRICKS;
+            default -> Material.YELLOW_TERRACOTTA;
+        };
+        // A 13x13 room extends outward from the broken block. It does not clear or
+        // replace the neighbouring blocks of the original wall.
+        for (int depth = 1; depth <= 13; depth++) {
+            for (int side = -6; side <= 6; side++) {
+                int x = opening.getX() + dx * depth + (dz != 0 ? side : 0);
+                int z = opening.getZ() + dz * depth + (dx != 0 ? side : 0);
+                world.getBlockAt(x, floorY, z).setType(floor, false);
+                world.getBlockAt(x, ceilingY, z).setType(level == 2 ? Material.DEEPSLATE_TILES : Material.SMOOTH_SANDSTONE, false);
                 for (int y = floorY + 1; y < ceilingY; y++) {
-                    int x = b.getX() + dx * d + (dx == 0 ? w : 0);
-                    int z = b.getZ() + dz * d + (dz == 0 ? w : 0);
-                    b.getWorld().getBlockAt(x, y, z).setType(Material.AIR, false);
+                    boolean sideWall = Math.abs(side) == 6;
+                    boolean farWall = depth == 13;
+                    boolean backWall = depth == 1 && side != 0;
+                    if (sideWall || farWall || backWall) world.getBlockAt(x, y, z).setType(wall, false);
+                    else world.getBlockAt(x, y, z).setType(Material.AIR, false);
                 }
             }
         }
+        // Give each newly discovered room a distinct landmark.
+        int centerX = opening.getX() + dx * 7;
+        int centerZ = opening.getZ() + dz * 7;
+        if (random.nextBoolean()) {
+            Material accent = level == 2 ? Material.CHAIN : Material.OAK_LOG;
+            for (int y = floorY + 1; y < floorY + 4 && y < ceilingY; y++) world.getBlockAt(centerX, y, centerZ).setType(accent, false);
+        } else {
+            world.getBlockAt(centerX, floorY + 1, centerZ).setType(level == 2 ? Material.RED_CARPET : Material.BROWN_CARPET, false);
+        }
+        int lightX = centerX + (dz != 0 ? 3 : 0);
+        int lightZ = centerZ + (dx != 0 ? 3 : 0);
+        world.getBlockAt(lightX, ceilingY, lightZ).setType(level == 2 ? Material.REDSTONE_LAMP : Material.SEA_LANTERN, false);
     }
 
     private boolean isWall(Material m) {
