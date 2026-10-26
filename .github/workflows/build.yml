@@ -15,9 +15,19 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Locate Gradle project
+        id: project
+        shell: bash
+        run: |
+          PROJECT_DIR=$(find . -name settings.gradle.kts -not -path '*/.gradle/*' -print -quit | xargs -r dirname)
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "Could not find settings.gradle.kts"; find . -maxdepth 4 -type f | sort; exit 1
+          fi
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
       - name: Build
+        working-directory: ${{ steps.project.outputs.dir }}
         run: gradle build
       - uses: actions/upload-artifact@v4
         with:
           name: BackroomsPlugin
-          path: build/libs/*.jar
+          path: ${{ steps.project.outputs.dir }}/build/libs/*.jar
