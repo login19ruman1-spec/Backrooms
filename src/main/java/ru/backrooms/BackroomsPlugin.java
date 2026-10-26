@@ -311,6 +311,13 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
         }
         addRoomDecor(world, baseX, baseZ, level, random, accent);
         addLevelSpecificDecor(world, baseX, baseZ, level, random);
+        // Purpose-built spaces make the maze feel inhabited before it was abandoned.
+        if (random.nextInt(100) < 62) {
+            int roomType = random.nextInt(level == 0 ? 3 : 2);
+            if (roomType == 0) buildWarehouse(world, baseX, baseZ, level, random);
+            else if (roomType == 1) buildOffice(world, baseX, baseZ, level, random);
+            else buildLibrary(world, baseX, baseZ, level, random);
+        }
     }
 
     private void addRoomDecor(World world, int baseX, int baseZ, int level, Random random, Material accent) {
@@ -338,7 +345,7 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
                 };
             };
             world.getBlockAt(x, floorY + 1, z).setType(prop, false);
-            if (prop == Material.CHEST) fillLoot(world.getBlockAt(x, floorY + 1, z), level, random);
+            if (prop == Material.CHEST || prop == Material.BARREL) fillLoot(world.getBlockAt(x, floorY + 1, z), level, random);
             if (prop == Material.IRON_BLOCK && random.nextBoolean())
                 world.getBlockAt(x, floorY + 2, z).setType(Material.IRON_BARS, false);
         }
@@ -349,7 +356,8 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
             for (int dx = 0; dx < 3; dx++) for (int dz = 0; dz < 2; dz++)
                 world.getBlockAt(x + dx, floorY + 1, z + dz).setType(base, false);
             world.getBlockAt(x + 1, floorY + 2, z).setType(Material.FURNACE, false);
-            world.getBlockAt(x + 2, floorY + 2, z + 1).setType(Material.CHEST, false);
+            Material storage = random.nextBoolean() ? Material.CHEST : Material.BARREL;
+            world.getBlockAt(x + 2, floorY + 2, z + 1).setType(storage, false);
             fillLoot(world.getBlockAt(x + 2, floorY + 2, z + 1), level, random);
         }
         // Very rare paintings on suitable wall blocks only.
@@ -403,34 +411,108 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
         }
     }
 
+    private void buildWarehouse(World world, int bx, int bz, int level, Random random) {
+        Material shelf = level == 2 ? Material.POLISHED_BLACKSTONE_BRICKS : (level == 1 ? Material.IRON_BLOCK : Material.SPRUCE_PLANKS);
+        // Parallel low shelves with a clear aisle; storage is always interactive and stocked.
+        for (int row = 0; row < 2; row++) {
+            int z = bz + 4 + row * 7;
+            for (int x = bx + 3; x <= bx + 12; x++) {
+                if (x == bx + 7 || x == bx + 8) continue;
+                world.getBlockAt(x, floorY + 1, z).setType(shelf, false);
+                if (random.nextInt(100) < 65) {
+                    Material storage = random.nextBoolean() ? Material.BARREL : Material.CHEST;
+                    Block b = world.getBlockAt(x, floorY + 2, z);
+                    b.setType(storage, false);
+                    fillLoot(b, level, random);
+                }
+                if (random.nextInt(100) < 45) world.getBlockAt(x, floorY + 3, z).setType(level == 0 ? Material.BOOKSHELF : Material.IRON_BARS, false);
+            }
+        }
+        if (random.nextBoolean()) {
+            Block crate = world.getBlockAt(bx + 6 + random.nextInt(4), floorY + 1, bz + 8);
+            crate.setType(Material.CHEST, false);
+            fillLoot(crate, level, random);
+        }
+    }
+
+    private void buildOffice(World world, int bx, int bz, int level, Random random) {
+        Material desk = level == 2 ? Material.DARK_OAK_PLANKS : Material.OAK_PLANKS;
+        // Three workstations, chairs and filing cabinets. Keep the central route open.
+        for (int i = 0; i < 3; i++) {
+            int x = bx + 3 + i * 4;
+            int z = bz + (i % 2 == 0 ? 4 : 11);
+            world.getBlockAt(x, floorY + 1, z).setType(desk, false);
+            world.getBlockAt(x + 1, floorY + 1, z).setType(Material.OAK_STAIRS, false);
+            world.getBlockAt(x, floorY + 2, z).setType(random.nextBoolean() ? Material.LECTERN : Material.COMPOSTER, false);
+            if (random.nextBoolean()) {
+                Block filing = world.getBlockAt(x + 1, floorY + 1, z + 1);
+                filing.setType(random.nextBoolean() ? Material.BARREL : Material.CHEST, false);
+                fillLoot(filing, level, random);
+            }
+        }
+        for (int x = bx + 3; x <= bx + 12; x += 3) {
+            world.getBlockAt(x, floorY + 1, bz + 2).setType(level == 1 ? Material.IRON_BLOCK : Material.BOOKSHELF, false);
+        }
+    }
+
+    private void buildLibrary(World world, int bx, int bz, int level, Random random) {
+        Material shelf = level == 2 ? Material.BOOKSHELF : Material.BOOKSHELF;
+        // Two book stacks form a small library with a reading table and occasional supply chest.
+        for (int z : new int[]{bz + 3, bz + 5, bz + 11, bz + 13}) {
+            for (int x = bx + 3; x <= bx + 12; x++) {
+                if (x == bx + 7 || x == bx + 8) continue;
+                world.getBlockAt(x, floorY + 1, z).setType(shelf, false);
+                if (random.nextBoolean()) world.getBlockAt(x, floorY + 2, z).setType(shelf, false);
+            }
+        }
+        world.getBlockAt(bx + 7, floorY + 1, bz + 8).setType(Material.SPRUCE_PLANKS, false);
+        world.getBlockAt(bx + 8, floorY + 1, bz + 8).setType(Material.SPRUCE_PLANKS, false);
+        if (random.nextInt(100) < 70) {
+            Block hidden = world.getBlockAt(bx + 10, floorY + 1, bz + 8);
+            hidden.setType(random.nextBoolean() ? Material.CHEST : Material.BARREL, false);
+            fillLoot(hidden, level, random);
+        }
+    }
+
     private void fillLoot(Block block, int level, Random random) {
-        if (!(block.getState() instanceof org.bukkit.block.Chest chest)) return;
-        org.bukkit.inventory.Inventory inv = chest.getBlockInventory();
+        org.bukkit.block.Container container;
+        if (block.getState() instanceof org.bukkit.block.Container c) {
+            container = c;
+        } else {
+            return;
+        }
+        org.bukkit.inventory.Inventory inv = container.getInventory();
         inv.clear();
-        int entries = 2 + random.nextInt(5);
+        // Fill a meaningful portion of the container, not just one or two random slots.
+        int entries = 5 + random.nextInt(7);
         for (int i = 0; i < entries; i++) {
             Material item;
             int amount = 1;
             if (level == 0) {
                 Material[] pool = {Material.PAPER, Material.MAP, Material.COMPASS, Material.COOKIE, Material.BREAD,
                     Material.BROWN_MUSHROOM, Material.STRING, Material.LEATHER, Material.GLASS_BOTTLE, Material.YELLOW_DYE,
-                    Material.ROTTEN_FLESH, Material.STICK, Material.FEATHER};
-                item = pool[random.nextInt(pool.length)]; amount = 1 + random.nextInt(4);
+                    Material.ROTTEN_FLESH, Material.STICK, Material.FEATHER, Material.BOOK, Material.WRITABLE_BOOK,
+                    Material.COOKED_BEEF, Material.CARROT, Material.POTATO, Material.OAK_PLANKS, Material.COPPER_INGOT};
+                item = pool[random.nextInt(pool.length)]; amount = 1 + random.nextInt(5);
             } else if (level == 1) {
                 Material[] pool = {Material.IRON_INGOT, Material.COPPER_INGOT, Material.REDSTONE, Material.RAIL,
                     Material.COAL, Material.RAW_IRON, Material.FLINT, Material.BREAD, Material.FURNACE,
-                    Material.IRON_NUGGET, Material.STRING, Material.GUNPOWDER};
-                item = pool[random.nextInt(pool.length)]; amount = 1 + random.nextInt(5);
+                    Material.IRON_NUGGET, Material.STRING, Material.GUNPOWDER, Material.CHAIN, Material.LEVER,
+                    Material.REPEATER, Material.TORCH, Material.COOKED_BEEF, Material.COPPER_BLOCK};
+                item = pool[random.nextInt(pool.length)]; amount = 1 + random.nextInt(6);
             } else {
                 Material[] pool = {Material.COAL, Material.SOUL_SAND, Material.BONE, Material.STRING, Material.SPIDER_EYE,
                     Material.ENDER_PEARL, Material.GOLD_NUGGET, Material.OBSIDIAN, Material.SCULK, Material.ROTTEN_FLESH,
-                    Material.POTION, Material.GLOWSTONE_DUST};
-                item = pool[random.nextInt(pool.length)]; amount = 1 + random.nextInt(3);
+                    Material.POTION, Material.GLOWSTONE_DUST, Material.BONE_MEAL, Material.ARROW, Material.FERMENTED_SPIDER_EYE,
+                    Material.BLACK_DYE, Material.CRYING_OBSIDIAN, Material.GOLD_INGOT};
+                item = pool[random.nextInt(pool.length)]; amount = 1 + random.nextInt(4);
             }
             org.bukkit.inventory.ItemStack stack = new org.bukkit.inventory.ItemStack(item, amount);
-            inv.setItem(random.nextInt(inv.getSize()), stack);
+            int slot = random.nextInt(inv.getSize());
+            while (inv.getItem(slot) != null) slot = random.nextInt(inv.getSize());
+            inv.setItem(slot, stack);
         }
-        chest.update(true, false);
+        container.update(true, false);
     }
 
     private boolean edgeOpen(int boundaryChunkX, int boundaryChunkZ, int axis) {
