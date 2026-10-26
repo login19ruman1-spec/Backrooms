@@ -5,6 +5,9 @@ import org.bukkit.block.Block;
 import org.bukkit.command.*;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Painting;
+import org.bukkit.Art;
+import org.bukkit.block.BlockFace;
 import org.bukkit.event.*;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
@@ -167,7 +170,7 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
         Material floor = switch (level) {
             case 1 -> Material.GRAY_CONCRETE;
             case 2 -> Material.POLISHED_DEEPSLATE;
-            default -> Material.YELLOW_CARPET;
+            default -> Material.YELLOW_WOOL;
         };
         Material ceiling = level == 2 ? Material.DEEPSLATE_TILES : Material.SMOOTH_SANDSTONE;
 
@@ -195,7 +198,7 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
         for (int i = 0; i < 2 + random.nextInt(3); i++) {
             int lx = baseX + 2 + random.nextInt(12);
             int lz = baseZ + 2 + random.nextInt(12);
-            world.getBlockAt(lx, ceilingY, lz).setType(level == 2 ? Material.REDSTONE_LAMP : Material.SEA_LANTERN, false);
+            world.getBlockAt(lx, ceilingY, lz).setType(Material.SEA_LANTERN, false);
         }
 
         // Add deterministic room variations: partial partitions, pillars, carpet patches and clutter.
@@ -327,7 +330,49 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
         // Small ceiling fixtures and occasional floor stains add visual variety.
         if (random.nextBoolean()) {
             int lx = baseX + 5 + random.nextInt(6), lz = baseZ + 5 + random.nextInt(6);
-            world.getBlockAt(lx, ceilingY, lz).setType(level == 2 ? Material.REDSTONE_LAMP : Material.SEA_LANTERN, false);
+            world.getBlockAt(lx, ceilingY, lz).setType(Material.SEA_LANTERN, false);
+        }
+        addRoomDecor(world, baseX, baseZ, level, random, accent);
+    }
+
+    private void addRoomDecor(World world, int baseX, int baseZ, int level, Random random, Material accent) {
+        // A few props per room, with lots of empty rooms for atmosphere.
+        int props = random.nextInt(4);
+        for (int i = 0; i < props; i++) {
+            int x = baseX + 2 + random.nextInt(12);
+            int z = baseZ + 2 + random.nextInt(12);
+            if (!world.getBlockAt(x, floorY + 1, z).getType().isAir()) continue;
+            Material prop = switch (random.nextInt(5)) {
+                case 0 -> Material.CHEST;
+                case 1 -> Material.FURNACE;
+                case 2 -> Material.BARREL;
+                case 3 -> Material.CRAFTING_TABLE;
+                default -> Material.IRON_BLOCK;
+            };
+            world.getBlockAt(x, floorY + 1, z).setType(prop, false);
+            if (prop == Material.IRON_BLOCK && random.nextBoolean())
+                world.getBlockAt(x, floorY + 2, z).setType(Material.IRON_BARS, false);
+        }
+        // Rare small abandoned utility nook.
+        if (random.nextInt(9) == 0) {
+            int x = baseX + 5 + random.nextInt(4), z = baseZ + 5 + random.nextInt(4);
+            Material base = level == 2 ? Material.POLISHED_BLACKSTONE_BRICKS : Material.BROWN_TERRACOTTA;
+            for (int dx = 0; dx < 3; dx++) for (int dz = 0; dz < 2; dz++)
+                world.getBlockAt(x + dx, floorY + 1, z + dz).setType(base, false);
+            world.getBlockAt(x + 1, floorY + 2, z).setType(Material.FURNACE, false);
+            world.getBlockAt(x + 2, floorY + 2, z + 1).setType(Material.CHEST, false);
+        }
+        // Very rare paintings on suitable wall blocks only.
+        if (random.nextInt(18) == 0) {
+            int x = baseX + 1 + random.nextInt(14), z = baseZ + 1 + random.nextInt(14);
+            int y = floorY + 2;
+            if (isWall(world.getBlockAt(x, y, z).getType())) {
+                try {
+                    Painting painting = world.spawn(new Location(world, x + 0.5, y + 0.1, z + 0.5), Painting.class);
+                    painting.setFacingDirection(BlockFace.SOUTH, true);
+                    painting.setArt(Art.KEBAB, true);
+                } catch (IllegalArgumentException ignored) { }
+            }
         }
     }
 
@@ -372,11 +417,8 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
         else if (localZ == 0) dz = -1;
         else if (localZ == 15) dz = 1;
         else {
-            // Infer the direction perpendicular to an interior wall from its neighbours.
-            boolean alongX = isWall(opening.getRelative(-1, 0, 0).getType())
-                    || isWall(opening.getRelative(1, 0, 0).getType());
-            boolean alongZ = isWall(opening.getRelative(0, 0, -1).getType())
-                    || isWall(opening.getRelative(0, 0, 1).getType());
+            boolean alongX = isWall(opening.getRelative(-1, 0, 0).getType()) || isWall(opening.getRelative(1, 0, 0).getType());
+            boolean alongZ = isWall(opening.getRelative(0, 0, -1).getType()) || isWall(opening.getRelative(0, 0, 1).getType());
             if (alongX && !alongZ) dz = 1;
             else if (alongZ && !alongX) dx = 1;
             else if (alongX) dz = 1;
@@ -388,42 +430,72 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
         Material floor = switch (level) {
             case 1 -> Material.GRAY_CONCRETE;
             case 2 -> Material.POLISHED_DEEPSLATE;
-            default -> Material.YELLOW_CARPET;
+            default -> Material.YELLOW_WOOL;
         };
         Material wall = switch (level) {
             case 1 -> Material.SMOOTH_STONE;
             case 2 -> Material.DEEPSLATE_BRICKS;
             default -> Material.YELLOW_TERRACOTTA;
         };
-        // A 13x13 room extends outward from the broken block. It does not clear or
-        // replace the neighbouring blocks of the original wall.
-        for (int depth = 1; depth <= 13; depth++) {
-            for (int side = -6; side <= 6; side++) {
+        Material ceiling = level == 2 ? Material.DEEPSLATE_TILES : Material.SMOOTH_SANDSTONE;
+
+        // Some discoveries lead to a room; others lead into a longer corridor network.
+        boolean corridor = random.nextInt(100) < 42;
+        int depthMax = corridor ? 26 + random.nextInt(13) : 13;
+        int halfWidth = corridor ? (random.nextBoolean() ? 2 : 3) : 6;
+        for (int depth = 1; depth <= depthMax; depth++) {
+            for (int side = -halfWidth; side <= halfWidth; side++) {
                 int x = opening.getX() + dx * depth + (dz != 0 ? side : 0);
                 int z = opening.getZ() + dz * depth + (dx != 0 ? side : 0);
                 world.getBlockAt(x, floorY, z).setType(floor, false);
-                world.getBlockAt(x, ceilingY, z).setType(level == 2 ? Material.DEEPSLATE_TILES : Material.SMOOTH_SANDSTONE, false);
+                world.getBlockAt(x, ceilingY, z).setType(ceiling, false);
                 for (int y = floorY + 1; y < ceilingY; y++) {
-                    boolean sideWall = Math.abs(side) == 6;
-                    boolean farWall = depth == 13;
-                    boolean backWall = depth == 1 && side != 0;
-                    if (sideWall || farWall || backWall) world.getBlockAt(x, y, z).setType(wall, false);
+                    boolean sideWall = Math.abs(side) == halfWidth;
+                    boolean farWall = !corridor && depth == depthMax;
+                    boolean nearWall = depth == 1 && side != 0;
+                    if (sideWall || farWall || nearWall) world.getBlockAt(x, y, z).setType(wall, false);
                     else world.getBlockAt(x, y, z).setType(Material.AIR, false);
                 }
             }
         }
-        // Give each newly discovered room a distinct landmark.
-        int centerX = opening.getX() + dx * 7;
-        int centerZ = opening.getZ() + dz * 7;
-        if (random.nextBoolean()) {
-            Material accent = level == 2 ? Material.CHAIN : Material.OAK_LOG;
-            for (int y = floorY + 1; y < floorY + 4 && y < ceilingY; y++) world.getBlockAt(centerX, y, centerZ).setType(accent, false);
+
+        if (corridor) {
+            // Cross passages branch off the new corridor, creating links to further sections.
+            int branches = 1 + random.nextInt(3);
+            for (int b = 0; b < branches; b++) {
+                int branchDepth = 5 + random.nextInt(Math.max(1, depthMax - 9));
+                int sideDir = random.nextBoolean() ? 1 : -1;
+                int startX = opening.getX() + dx * branchDepth;
+                int startZ = opening.getZ() + dz * branchDepth;
+                for (int length = 1; length <= 8 + random.nextInt(9); length++) {
+                    for (int side = -1; side <= 1; side++) {
+                        int x = startX + (dz != 0 ? sideDir * length : side);
+                        int z = startZ + (dx != 0 ? sideDir * length : side);
+                        world.getBlockAt(x, floorY, z).setType(floor, false);
+                        world.getBlockAt(x, ceilingY, z).setType(ceiling, false);
+                        for (int y = floorY + 1; y < ceilingY; y++) {
+                            boolean edge = Math.abs(side) == 1;
+                            boolean end = length == 8 + 0; // The corridor is intentionally left open at most ends.
+                            if (edge && y < ceilingY - 1) world.getBlockAt(x, y, z).setType(wall, false);
+                            else world.getBlockAt(x, y, z).setType(Material.AIR, false);
+                        }
+                    }
+                }
+            }
         } else {
-            world.getBlockAt(centerX, floorY + 1, centerZ).setType(level == 2 ? Material.RED_CARPET : Material.BROWN_CARPET, false);
+            int cx = opening.getX() + dx * 7;
+            int cz = opening.getZ() + dz * 7;
+            if (random.nextBoolean()) {
+                Material accent = level == 2 ? Material.CHAIN : Material.OAK_LOG;
+                for (int y = floorY + 1; y < floorY + 4 && y < ceilingY; y++) world.getBlockAt(cx, y, cz).setType(accent, false);
+            } else {
+                world.getBlockAt(cx, floorY + 1, cz).setType(level == 2 ? Material.RED_CARPET : Material.BROWN_CARPET, false);
+            }
+            addRoomDecor(world, cx - 8, cz - 8, level, random, wall);
         }
-        int lightX = centerX + (dz != 0 ? 3 : 0);
-        int lightZ = centerZ + (dx != 0 ? 3 : 0);
-        world.getBlockAt(lightX, ceilingY, lightZ).setType(level == 2 ? Material.REDSTONE_LAMP : Material.SEA_LANTERN, false);
+        int lightX = opening.getX() + dx * Math.min(depthMax / 2, 8);
+        int lightZ = opening.getZ() + dz * Math.min(depthMax / 2, 8);
+        world.getBlockAt(lightX, ceilingY, lightZ).setType(Material.SEA_LANTERN, false);
     }
 
     private boolean isWall(Material m) {
