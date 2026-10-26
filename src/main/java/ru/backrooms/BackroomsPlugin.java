@@ -104,29 +104,8 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
             return true;
         }
         if (args[0].equalsIgnoreCase("level")) {
-            if (!(sender instanceof Player p)) {
-                sender.sendMessage("Команда доступна игроку.");
-                return true;
-            }
-            if (!generationEnabled) {
-                p.sendMessage(ChatColor.RED + "Сначала администратор должен выполнить /br generate.");
-                return true;
-            }
-            if (args.length < 2 || !Set.of("0", "1", "2").contains(args[1])) {
-                p.sendMessage(ChatColor.YELLOW + "Использование: /br level <0|1|2>");
-                return true;
-            }
-            World targetWorld = Bukkit.getWorld(worldName);
-            if (targetWorld == null) {
-                p.sendMessage(ChatColor.RED + "Мир не загружен.");
-                return true;
-            }
-            int level = Integer.parseInt(args[1]);
-            int x = originX + (level * levelSpacing);
-            Location target = new Location(targetWorld, x + 0.5, floorY + 1, originZ + 0.5);
-            buildAround(target);
-            p.teleport(target);
-            p.sendMessage(ChatColor.LIGHT_PURPLE + "Переход на уровень " + level + ".");
+            sender.sendMessage(ChatColor.YELLOW + "Прямой телепорт отключён: уровни находятся через физические порталы, размещённые в случайных секциях.");
+            sender.sendMessage(ChatColor.GRAY + "Исследуй коридоры и комнаты, чтобы найти портал.");
             return true;
         }
         sender.sendMessage(ChatColor.RED + "Неизвестная команда. Используй /br.");
@@ -205,12 +184,12 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
         // Every chunk gets a different layout while keeping a walkable route through the room.
         decorateRoom(world, baseX, baseZ, level, random, wall, floor);
 
-        // Put a physical portal in the hub chunk for each level.
-        int hubX = originX + level * levelSpacing;
-        int hubChunkX = Math.floorDiv(hubX, 16);
-        int hubChunkZ = Math.floorDiv(originZ, 16);
-        if (chunkX == hubChunkX && chunkZ == hubChunkZ) {
-            buildPortal(world, hubX + 2, originZ + 2, level);
+        // Portals spawn rarely in random generated sections, never at a fixed hub.
+        // The seed is stable, so reloading a chunk does not move its portal.
+        if (random.nextInt(28) == 0) {
+            int portalX = baseX + 6 + random.nextInt(4);
+            int portalZ = baseZ + 6 + random.nextInt(4);
+            buildPortal(world, portalX, portalZ, level);
         }
     }
 
@@ -271,16 +250,14 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
         World world = Bukkit.getWorld(worldName);
         if (world == null) return;
 
-        int hubX = originX + nextLevel * levelSpacing;
-        int hubZ = originZ;
-        int chunkX = Math.floorDiv(hubX + 2, 16);
-        int chunkZ = Math.floorDiv(hubZ + 2, 16);
-        buildAround(new Location(world, hubX + 3.5, floorY + 1, hubZ + 5.5));
-        buildChunk(world, chunkX, chunkZ);
-        buildPortal(world, hubX + 2, hubZ + 2, nextLevel);
-
-        // Place the player in front of the destination portal, facing into the room.
-        Location target = new Location(world, hubX + 3.5, floorY + 1, hubZ + 5.5, 0f, 0f);
+        // Each level occupies its own X zone. Arrive in a safe, freshly generated section;
+        // portals themselves are discovered organically in random chunks.
+        int targetX = originX + nextLevel * levelSpacing + 32 + new Random().nextInt(256);
+        int targetZ = originZ + 32 + new Random().nextInt(256);
+        Location target = new Location(world, targetX + 0.5, floorY + 1, targetZ + 0.5, 0f, 0f);
+        int destinationChunkX = target.getBlockX() >> 4;
+        int destinationChunkZ = target.getBlockZ() >> 4;
+        buildChunk(world, destinationChunkX, destinationChunkZ);
         target.getBlock().setType(Material.AIR, false);
         target.clone().add(0, 1, 0).getBlock().setType(Material.AIR, false);
         player.teleport(target);
@@ -333,23 +310,35 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
             world.getBlockAt(lx, ceilingY, lz).setType(Material.SEA_LANTERN, false);
         }
         addRoomDecor(world, baseX, baseZ, level, random, accent);
+        addLevelSpecificDecor(world, baseX, baseZ, level, random);
     }
 
     private void addRoomDecor(World world, int baseX, int baseZ, int level, Random random, Material accent) {
         // A few props per room, with lots of empty rooms for atmosphere.
-        int props = random.nextInt(4);
+        int props = random.nextInt(100) < 78 ? 3 + random.nextInt(5) : random.nextInt(2);
         for (int i = 0; i < props; i++) {
             int x = baseX + 2 + random.nextInt(12);
             int z = baseZ + 2 + random.nextInt(12);
             if (!world.getBlockAt(x, floorY + 1, z).getType().isAir()) continue;
-            Material prop = switch (random.nextInt(5)) {
-                case 0 -> Material.CHEST;
-                case 1 -> Material.FURNACE;
-                case 2 -> Material.BARREL;
-                case 3 -> Material.CRAFTING_TABLE;
-                default -> Material.IRON_BLOCK;
+            Material prop = switch (level) {
+                case 1 -> switch (random.nextInt(7)) {
+                    case 0 -> Material.CHEST; case 1 -> Material.BARREL; case 2 -> Material.FURNACE;
+                    case 3 -> Material.IRON_BLOCK; case 4 -> Material.CHAIN; case 5 -> Material.LIGHTNING_ROD;
+                    default -> Material.CRAFTING_TABLE;
+                };
+                case 2 -> switch (random.nextInt(7)) {
+                    case 0 -> Material.CHEST; case 1 -> Material.BARREL; case 2 -> Material.SOUL_LANTERN;
+                    case 3 -> Material.CRYING_OBSIDIAN; case 4 -> Material.CHAIN; case 5 -> Material.FURNACE;
+                    default -> Material.POLISHED_BLACKSTONE_BRICKS;
+                };
+                default -> switch (random.nextInt(7)) {
+                    case 0 -> Material.CHEST; case 1 -> Material.BARREL; case 2 -> Material.FURNACE;
+                    case 3 -> Material.CRAFTING_TABLE; case 4 -> Material.OAK_STAIRS; case 5 -> Material.FLOWER_POT;
+                    default -> Material.BROWN_TERRACOTTA;
+                };
             };
             world.getBlockAt(x, floorY + 1, z).setType(prop, false);
+            if (prop == Material.CHEST) fillLoot(world.getBlockAt(x, floorY + 1, z), level, random);
             if (prop == Material.IRON_BLOCK && random.nextBoolean())
                 world.getBlockAt(x, floorY + 2, z).setType(Material.IRON_BARS, false);
         }
@@ -361,6 +350,7 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
                 world.getBlockAt(x + dx, floorY + 1, z + dz).setType(base, false);
             world.getBlockAt(x + 1, floorY + 2, z).setType(Material.FURNACE, false);
             world.getBlockAt(x + 2, floorY + 2, z + 1).setType(Material.CHEST, false);
+            fillLoot(world.getBlockAt(x + 2, floorY + 2, z + 1), level, random);
         }
         // Very rare paintings on suitable wall blocks only.
         if (random.nextInt(18) == 0) {
@@ -374,6 +364,73 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
                 } catch (IllegalArgumentException ignored) { }
             }
         }
+    }
+
+    private void addLevelSpecificDecor(World world, int bx, int bz, int level, Random random) {
+        // Level-specific visual language: office clutter on 0, industrial equipment on 1,
+        // dark abandoned infrastructure on 2. Decoration is dense but leaves a route open.
+        int clusters = 2 + random.nextInt(4);
+        for (int i = 0; i < clusters; i++) {
+            int x = bx + 2 + random.nextInt(12), z = bz + 2 + random.nextInt(12);
+            if (!world.getBlockAt(x, floorY + 1, z).getType().isAir()) continue;
+            if (level == 0) {
+                if (random.nextBoolean()) {
+                    world.getBlockAt(x, floorY + 1, z).setType(Material.OAK_PLANKS, false);
+                    world.getBlockAt(x, floorY + 2, z).setType(Material.OAK_SLAB, false);
+                    if (random.nextBoolean()) world.getBlockAt(x + 1, floorY + 1, z).setType(Material.BOOKSHELF, false);
+                } else {
+                    world.getBlockAt(x, floorY + 1, z).setType(Material.YELLOW_CARPET, false);
+                    if (random.nextInt(4) == 0) world.getBlockAt(x, floorY + 2, z).setType(Material.FLOWER_POT, false);
+                }
+            } else if (level == 1) {
+                Material[] industrial = {Material.IRON_BLOCK, Material.IRON_BARS, Material.CHAIN, Material.BLAST_FURNACE, Material.COPPER_BLOCK, Material.BARREL};
+                Material m = industrial[random.nextInt(industrial.length)];
+                world.getBlockAt(x, floorY + 1, z).setType(m, false);
+                if (random.nextBoolean()) world.getBlockAt(x, floorY + 2, z).setType(Material.IRON_BARS, false);
+            } else {
+                Material[] dark = {Material.SOUL_SAND, Material.CRYING_OBSIDIAN, Material.POLISHED_BLACKSTONE_BRICKS, Material.CHAIN, Material.SOUL_LANTERN, Material.SCULK};
+                Material m = dark[random.nextInt(dark.length)];
+                world.getBlockAt(x, floorY + 1, z).setType(m, false);
+                if (m == Material.SOUL_SAND && random.nextBoolean()) world.getBlockAt(x, floorY + 2, z).setType(Material.SOUL_LANTERN, false);
+            }
+        }
+        // Level 1 and 2 get actual light sources, not unpowered redstone lamps.
+        int lights = 2 + random.nextInt(3);
+        for (int i = 0; i < lights; i++) {
+            int x = bx + 2 + random.nextInt(12), z = bz + 2 + random.nextInt(12);
+            Material light = level == 2 ? Material.SOUL_LANTERN : (level == 1 ? Material.SEA_LANTERN : Material.SEA_LANTERN);
+            world.getBlockAt(x, ceilingY, z).setType(light, false);
+        }
+    }
+
+    private void fillLoot(Block block, int level, Random random) {
+        if (!(block.getState() instanceof org.bukkit.block.Chest chest)) return;
+        org.bukkit.inventory.Inventory inv = chest.getBlockInventory();
+        inv.clear();
+        int entries = 2 + random.nextInt(5);
+        for (int i = 0; i < entries; i++) {
+            Material item;
+            int amount = 1;
+            if (level == 0) {
+                Material[] pool = {Material.PAPER, Material.MAP, Material.COMPASS, Material.COOKIE, Material.BREAD,
+                    Material.BROWN_MUSHROOM, Material.STRING, Material.LEATHER, Material.GLASS_BOTTLE, Material.YELLOW_DYE,
+                    Material.ROTTEN_FLESH, Material.STICK, Material.FEATHER};
+                item = pool[random.nextInt(pool.length)]; amount = 1 + random.nextInt(4);
+            } else if (level == 1) {
+                Material[] pool = {Material.IRON_INGOT, Material.COPPER_INGOT, Material.REDSTONE, Material.RAIL,
+                    Material.COAL, Material.RAW_IRON, Material.FLINT, Material.BREAD, Material.FURNACE,
+                    Material.IRON_NUGGET, Material.STRING, Material.GUNPOWDER};
+                item = pool[random.nextInt(pool.length)]; amount = 1 + random.nextInt(5);
+            } else {
+                Material[] pool = {Material.COAL, Material.SOUL_SAND, Material.BONE, Material.STRING, Material.SPIDER_EYE,
+                    Material.ENDER_PEARL, Material.GOLD_NUGGET, Material.OBSIDIAN, Material.SCULK, Material.ROTTEN_FLESH,
+                    Material.POTION, Material.GLOWSTONE_DUST};
+                item = pool[random.nextInt(pool.length)]; amount = 1 + random.nextInt(3);
+            }
+            org.bukkit.inventory.ItemStack stack = new org.bukkit.inventory.ItemStack(item, amount);
+            inv.setItem(random.nextInt(inv.getSize()), stack);
+        }
+        chest.update(true, false);
     }
 
     private boolean edgeOpen(int boundaryChunkX, int boundaryChunkZ, int axis) {
