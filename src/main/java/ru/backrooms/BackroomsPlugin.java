@@ -285,7 +285,7 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
             }
         } else if (pattern == 2) {
             for (int[] pos : new int[][]{{3,3},{12,3},{3,12},{12,12}}) {
-                for (int y = floorY + 1; y < ceilingY; y++) world.getBlockAt(baseX + pos[0], y, baseZ + pos[1]).setType(accent, false);
+                for (int y = floorY + 1; y < Math.min(ceilingY, floorY + 4); y++) world.getBlockAt(baseX + pos[0], y, baseZ + pos[1]).setType(accent, false);
             }
         } else if (pattern == 3) {
             Material carpet = level == 2 ? Material.RED_CARPET : (level == 1 ? Material.GRAY_CARPET : Material.YELLOW_CARPET);
@@ -309,14 +309,16 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
             int lx = baseX + 5 + random.nextInt(6), lz = baseZ + 5 + random.nextInt(6);
             world.getBlockAt(lx, ceilingY, lz).setType(Material.SEA_LANTERN, false);
         }
-        addRoomDecor(world, baseX, baseZ, level, random, accent);
-        addLevelSpecificDecor(world, baseX, baseZ, level, random);
-        // Purpose-built spaces make the maze feel inhabited before it was abandoned.
-        if (random.nextInt(100) < 62) {
-            int roomType = random.nextInt(level == 0 ? 3 : 2);
+        // Use one coherent room theme per section. Avoid layering random props over
+        // shelves/desks, which previously made rooms look cluttered and accidental.
+        if (random.nextInt(100) < 72) {
+            int roomType = random.nextInt(3);
             if (roomType == 0) buildWarehouse(world, baseX, baseZ, level, random);
             else if (roomType == 1) buildOffice(world, baseX, baseZ, level, random);
             else buildLibrary(world, baseX, baseZ, level, random);
+        } else {
+            addRoomDecor(world, baseX, baseZ, level, random, accent);
+            addLevelSpecificDecor(world, baseX, baseZ, level, random);
         }
     }
 
@@ -475,6 +477,14 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
     }
 
     private void fillLoot(Block block, int level, Random random) {
+        // Defer inventory population until after all block placement for this room finishes.
+        // This prevents later generation updates from replacing the container's block state
+        // and leaving visually present chests/barrels empty.
+        long lootSeed = random.nextLong();
+        Bukkit.getScheduler().runTask(this, () -> fillLootNow(block, level, new Random(lootSeed)));
+    }
+
+    private void fillLootNow(Block block, int level, Random random) {
         org.bukkit.block.Container container;
         if (block.getState() instanceof org.bukkit.block.Container c) {
             container = c;
@@ -508,9 +518,13 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
                 item = pool[random.nextInt(pool.length)]; amount = 1 + random.nextInt(4);
             }
             org.bukkit.inventory.ItemStack stack = new org.bukkit.inventory.ItemStack(item, amount);
-            int slot = random.nextInt(inv.getSize());
-            while (inv.getItem(slot) != null) slot = random.nextInt(inv.getSize());
-            inv.setItem(slot, stack);
+            int slot;
+            int attempts = 0;
+            do {
+                slot = random.nextInt(inv.getSize());
+                attempts++;
+            } while (inv.getItem(slot) != null && attempts < inv.getSize() * 2);
+            if (inv.getItem(slot) == null) inv.setItem(slot, stack);
         }
         container.update(true, false);
     }
