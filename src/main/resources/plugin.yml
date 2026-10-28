@@ -1,13 +1,17 @@
 name: Backrooms
-version: '2.1.0'
+version: '2.3.0'
 main: ru.backrooms.BackroomsPlugin
 api-version: '1.21'
+softdepend: [Citizens]
 description: Procedural Backrooms for an existing flat world
 commands:
   backrooms:
     description: Управление Backrooms
+    usage: /backrooms <generate|stop|level|info>
+    aliases: [backroomsbr]
+  br:
+    description: Короткая команда Backrooms
     usage: /br <generate|stop|level|info>
-    aliases: [br]
 permissions:
   backrooms.admin:
     description: Управление генерацией Backrooms
