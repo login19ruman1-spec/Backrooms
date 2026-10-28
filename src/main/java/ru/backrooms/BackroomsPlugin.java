@@ -916,41 +916,49 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
                 meta.setTitle("ДРАЙВЕР // KERNEL");
                 meta.setAuthor("BACKROOMS SYSTEM");
                 meta.setPages(List.of(
-                    "[СИСТЕМА: ДРАЙВЕР]
+                    """
+                    [СИСТЕМА: ДРАЙВЕР]
 
-Устройство обнаружено: LIMINAL_NODE_07
-Статус: нестабилен
+                    Устройство обнаружено: LIMINAL_NODE_07
+                    Статус: нестабилен
 
-Код восстановления:
-BR-07-4F-A19C
+                    Код восстановления:
+                    BR-07-4F-A19C
 
-Не запускайте модуль повторно без резервной копии.",
-                    "// driver_patch.sys
-LOAD SECTOR 07
-CHECKSUM: 9A-00-BC-17
+                    Не запускайте модуль повторно без резервной копии.
+                    """,
+                    """
+                    // driver_patch.sys
+                    LOAD SECTOR 07
+                    CHECKSUM: 9A-00-BC-17
 
-Если коридор повторяется трижды — драйвер не найден. Ищите терминал рядом с работающим светом."
+                    Если коридор повторяется трижды — драйвер не найден. Ищите терминал рядом с работающим светом.
+                    """
                 ));
             } else {
                 meta.setTitle("АНТИВИРУС // QUARANTINE");
                 meta.setAuthor("UNKNOWN PROCESS");
                 meta.setPages(List.of(
-                    "[АНТИВИРУС: КАРАНТИН]
+                    """
+                    [АНТИВИРУС: КАРАНТИН]
 
-Обнаружена угроза: MIRROR.VIR
-Уровень риска: КРИТИЧЕСКИЙ
+                    Обнаружена угроза: MIRROR.VIR
+                    Уровень риска: КРИТИЧЕСКИЙ
 
-Ключ сигнатуры:
-VIR-13-0X-NULL
+                    Ключ сигнатуры:
+                    VIR-13-0X-NULL
 
-Не доверяйте сообщениям, которые приходят из пустых комнат.",
-                    "scan --deep /level/*
-quarantine --isolate MIRROR.VIR
-restore --safe-mode
+                    Не доверяйте сообщениям, которые приходят из пустых комнат.
+                    """,
+                    """
+                    scan --deep /level/*
+                    quarantine --isolate MIRROR.VIR
+                    restore --safe-mode
 
-ОШИБКА: процесс уже имеет права администратора.
+                    ОШИБКА: процесс уже имеет права администратора.
 
-Если вы читаете это, не подключайте неизвестные диски."
+                    Если вы читаете это, не подключайте неизвестные диски.
+                    """
                 ));
             }
             book.setItemMeta(meta);
