@@ -114,7 +114,7 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
     }
 
     private void spawnCloneIfMissing(String playerName) {
-        if (!getConfig().getBoolean("clones.enabled", true) || !generationEnabled) return;
+        if (!getConfig().getBoolean("clones.enabled", true)) return;
         if (!getServer().getPluginManager().isPluginEnabled("Citizens")) return;
         World world = Bukkit.getWorld(worldName);
         if (world == null) return;
@@ -131,8 +131,13 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
             int radiusChunks = Math.max(2, getConfig().getInt("clones.spawn-radius-chunks", 12));
             int chunkX = Math.floorDiv(originX, 16) + npcRandom.nextInt(radiusChunks * 2 + 1) - radiusChunks;
             int chunkZ = Math.floorDiv(originZ, 16) + npcRandom.nextInt(radiusChunks * 2 + 1) - radiusChunks;
-            buildChunk(world, chunkX, chunkZ);
+            String chunkKey = world.getName() + ":" + chunkX + ":" + chunkZ;
+            if (builtChunks.add(chunkKey)) buildChunk(world, chunkX, chunkZ);
+            // Re-scan on the next tick after the generator has placed the floor and air volume.
             Location spawn = findNpcSpawnLocation(world, chunkX, chunkZ);
+            if (!spawn.getBlock().getType().isAir() || !spawn.getBlock().getRelative(0, 1, 0).getType().isAir()) {
+                spawn = new Location(world, chunkX * 16 + 8.5, floorY + 1, chunkZ * 16 + 8.5);
+            }
             Method createNpc = null;
             for (Method method : registry.getClass().getMethods()) {
                 if (method.getName().equals("createNPC") && method.getParameterCount() == 2
@@ -167,7 +172,7 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
      * then disappear and return later. Reflection keeps Citizens an optional dependency.
      */
     private void tickCloneBehavior() {
-        if (!getConfig().getBoolean("clones.enabled", true) || !generationEnabled
+        if (!getConfig().getBoolean("clones.enabled", true)
                 || !getServer().getPluginManager().isPluginEnabled("Citizens")) return;
         World world = Bukkit.getWorld(worldName);
         if (world == null) return;
@@ -266,7 +271,8 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
         int radiusChunks = Math.max(2, getConfig().getInt("clones.spawn-radius-chunks", 12));
         int cx = Math.floorDiv(originX, 16) + npcRandom.nextInt(radiusChunks * 2 + 1) - radiusChunks;
         int cz = Math.floorDiv(originZ, 16) + npcRandom.nextInt(radiusChunks * 2 + 1) - radiusChunks;
-        buildChunk(world, cx, cz);
+        String chunkKey = world.getName() + ":" + cx + ":" + cz;
+        if (builtChunks.add(chunkKey)) buildChunk(world, cx, cz);
         return findNpcSpawnLocation(world, cx, cz);
     }
 
@@ -281,7 +287,8 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
             int x = current.getBlockX() + npcRandom.nextInt(radius * 2 + 1) - radius;
             int z = current.getBlockZ() + npcRandom.nextInt(radius * 2 + 1) - radius;
             int cx = Math.floorDiv(x, 16), cz = Math.floorDiv(z, 16);
-            buildChunk(world, cx, cz);
+            String chunkKey = world.getName() + ":" + cx + ":" + cz;
+            if (builtChunks.add(chunkKey)) buildChunk(world, cx, cz);
             Location target = findNpcSpawnLocation(world, cx, cz);
             cloneLastLocations.put(String.valueOf(npc.getClass().getMethod("getName").invoke(npc)).toLowerCase(Locale.ROOT), target.clone());
             Object navigator = npc.getClass().getMethod("getNavigator").invoke(npc);
@@ -405,8 +412,8 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
                 return true;
             }
             int cx = target.getBlockX() >> 4, cz = target.getBlockZ() >> 4;
-            builtChunks.remove(world.getName() + ":" + cx + ":" + cz);
-            buildChunk(world, cx, cz);
+            String targetChunkKey = world.getName() + ":" + cx + ":" + cz;
+            if (builtChunks.add(targetChunkKey)) buildChunk(world, cx, cz);
             target.setY(floorY + 1);
             if (sender instanceof Player player) {
                 player.teleport(target);
@@ -448,9 +455,9 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
         int level = getLevelAt(baseX + 8, baseZ + 8);
         int theme = themeFor(level);
         Random random = new Random(hash(chunkX, chunkZ, level));
-        Material wall = wallForTheme(theme);
-        Material floor = floorForTheme(theme);
-        Material ceiling = ceilingForTheme(theme);
+        Material wall = wallForLevel(level);
+        Material floor = floorForLevel(level);
+        Material ceiling = ceilingForLevel(level);
 
         // Make the chunk interior into a room/corridor volume. Floor and ceiling are rebuilt,
         // while existing chunks are only touched once per plugin runtime.
@@ -482,6 +489,7 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
         // Add deterministic room variations: partial partitions, pillars, carpet patches and clutter.
         // Every chunk gets a different layout while keeping a walkable route through the room.
         decorateRoom(world, baseX, baseZ, level, random, wall, floor);
+        addLevelSignature(world, baseX, baseZ, level, random);
 
         // Portals spawn rarely in random generated sections, never at a fixed hub.
         // The seed is stable, so reloading a chunk does not move its portal.
@@ -491,7 +499,8 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
             buildPortal(world, portalX, portalZ, level);
         }
         // Final pass: fill all newly placed containers after the entire room layout is complete.
-        Bukkit.getScheduler().runTaskLater(this, () -> populateContainersInChunk(world, chunkX, chunkZ, level), 2L);
+        Bukkit.getScheduler().runTaskLater(this, () -> populateContainersInChunk(world, chunkX, chunkZ, level), 5L);
+        Bukkit.getScheduler().runTaskLater(this, () -> populateContainersInChunk(world, chunkX, chunkZ, level), 40L);
     }
 
     private void buildPortal(World world, int x, int z, int level) {
@@ -560,7 +569,8 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
         if (target == null) return;
         int destinationChunkX = target.getBlockX() >> 4;
         int destinationChunkZ = target.getBlockZ() >> 4;
-        buildChunk(world, destinationChunkX, destinationChunkZ);
+        String destinationKey = world.getName() + ":" + destinationChunkX + ":" + destinationChunkZ;
+        if (builtChunks.add(destinationKey)) buildChunk(world, destinationChunkX, destinationChunkZ);
         target.getBlock().setType(Material.AIR, false);
         target.clone().add(0, 1, 0).getBlock().setType(Material.AIR, false);
         player.teleport(target);
@@ -833,32 +843,26 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
 
     private void fillLootNow(Block block, int level, Random random) {
         if (!(block.getState() instanceof org.bukkit.block.Container container)) return;
-        TileState tile = container;
         org.bukkit.inventory.Inventory inv = container.getInventory();
-        // Older versions could mark an empty chest as populated. Refill those legacy containers.
-        if (tile.getPersistentDataContainer().has(lootMarker, PersistentDataType.BYTE)) {
-            if (!inv.isEmpty()) return;
-            tile.getPersistentDataContainer().remove(lootMarker);
-        }
+        TileState tile = container;
+        // Never trust an old marker if the inventory is empty: legacy builds may have
+        // marked containers before items were successfully committed to the chunk.
         if (!inv.isEmpty()) {
-            // Preserve manually placed/server loot, but do not mark empty containers as populated.
             tile.getPersistentDataContainer().set(lootMarker, PersistentDataType.BYTE, (byte) 1);
             container.update(true, true);
             return;
         }
         inv.clear();
-        // Always place several real resources, plus system/virus notes and occasional special books.
-        int entries = 12 + random.nextInt(7);
+        int entries = Math.min(inv.getSize() - 1, 10 + random.nextInt(7));
+        List<Integer> slots = new ArrayList<>();
+        for (int i = 0; i < inv.getSize(); i++) slots.add(i);
+        Collections.shuffle(slots, random);
         for (int i = 0; i < entries; i++) {
             ItemStack stack = makeLootItem(level, random);
-            int slot = random.nextInt(inv.getSize());
-            for (int tries = 0; tries < inv.getSize() && inv.getItem(slot) != null; tries++) slot = (slot + 1) % inv.getSize();
-            if (inv.getItem(slot) == null) inv.setItem(slot, stack);
+            if (stack != null && stack.getType() != Material.AIR) inv.setItem(slots.get(i), stack);
         }
-        // Every container receives a guaranteed note, so there is always something to read.
-        int noteSlot = random.nextInt(inv.getSize());
-        for (int tries = 0; tries < inv.getSize() && inv.getItem(noteSlot) != null; tries++) noteSlot = (noteSlot + 1) % inv.getSize();
-        if (inv.getItem(noteSlot) == null) inv.setItem(noteSlot, makeNote(level, random));
+        // Guaranteed useful resource stack and readable note in every generated chest/barrel.
+        if (inv.getSize() > 1) inv.setItem(slots.get(inv.getSize() - 1), makeNote(level, random));
         tile.getPersistentDataContainer().set(lootMarker, PersistentDataType.BYTE, (byte) 1);
         container.update(true, true);
     }
@@ -1000,6 +1004,214 @@ public final class BackroomsPlugin extends JavaPlugin implements Listener, Comma
         }
         return null;
     }
+    // Every main level and sublevel has its own palette. Odd IDs are sublevels,
+    // deliberately not just recolors: addLevelSignature also gives each one a mechanic.
+    private Material wallForLevel(int level) {
+        return switch (level) {
+            case 0 -> Material.YELLOW_TERRACOTTA;
+            case 1 -> Material.MOSSY_COBBLESTONE;
+            case 2 -> Material.SMOOTH_STONE;
+            case 3 -> Material.CUT_COPPER;
+            case 4 -> Material.MOSS_BLOCK;
+            case 5 -> Material.POLISHED_BLACKSTONE_BRICKS;
+            case 6 -> Material.OAK_PLANKS;
+            case 7 -> Material.IRON_BLOCK;
+            case 8 -> Material.BOOKSHELF;
+            case 9 -> Material.RED_NETHER_BRICKS;
+            case 10 -> Material.PACKED_ICE;
+            case 11 -> Material.BLUE_ICE;
+            case 12 -> Material.PRISMARINE_BRICKS;
+            case 13 -> Material.DARK_PRISMARINE;
+            case 14 -> Material.BONE_BLOCK;
+            case 15 -> Material.NETHER_BRICKS;
+            case 16 -> Material.END_STONE_BRICKS;
+            case 17 -> Material.PURPUR_BLOCK;
+            case 18 -> Material.CALCITE;
+            case 19 -> Material.TUFF_BRICKS;
+            case 20 -> Material.DEEPSLATE_BRICKS;
+            case 21 -> Material.CRYING_OBSIDIAN;
+            default -> Material.POLISHED_BLACKSTONE_BRICKS;
+        };
+    }
+
+    private Material floorForLevel(int level) {
+        return switch (level) {
+            case 0 -> Material.YELLOW_WOOL;
+            case 1 -> Material.MOSSY_STONE_BRICKS;
+            case 2 -> Material.GRAY_CONCRETE;
+            case 3 -> Material.EXPOSED_COPPER;
+            case 4 -> Material.MOSS_BLOCK;
+            case 5 -> Material.BLACKSTONE;
+            case 6 -> Material.SPRUCE_PLANKS;
+            case 7 -> Material.IRON_BLOCK;
+            case 8 -> Material.OAK_PLANKS;
+            case 9 -> Material.RED_CONCRETE;
+            case 10 -> Material.SNOW_BLOCK;
+            case 11 -> Material.BLUE_ICE;
+            case 12 -> Material.PRISMARINE;
+            case 13 -> Material.WATER;
+            case 14 -> Material.BONE_BLOCK;
+            case 15 -> Material.SOUL_SOIL;
+            case 16 -> Material.END_STONE;
+            case 17 -> Material.PURPUR_BLOCK;
+            case 18 -> Material.CALCITE;
+            case 19 -> Material.MUD_BRICKS;
+            case 20 -> Material.POLISHED_DEEPSLATE;
+            case 21 -> Material.MAGMA_BLOCK;
+            default -> Material.BLACKSTONE;
+        };
+    }
+
+    private Material ceilingForLevel(int level) {
+        return switch (level) {
+            case 0 -> Material.SMOOTH_SANDSTONE;
+            case 1 -> Material.MOSSY_COBBLESTONE;
+            case 2 -> Material.IRON_BLOCK;
+            case 3 -> Material.COPPER_BLOCK;
+            case 4 -> Material.OAK_LEAVES;
+            case 5 -> Material.POLISHED_BLACKSTONE;
+            case 6 -> Material.SPRUCE_PLANKS;
+            case 7 -> Material.CHAIN;
+            case 8 -> Material.BOOKSHELF;
+            case 9 -> Material.NETHER_BRICKS;
+            case 10 -> Material.SNOW_BLOCK;
+            case 11 -> Material.BLUE_ICE;
+            case 12 -> Material.PRISMARINE;
+            case 13 -> Material.DARK_PRISMARINE;
+            case 14 -> Material.BONE_BLOCK;
+            case 15 -> Material.NETHERRACK;
+            case 16 -> Material.END_STONE_BRICKS;
+            case 17 -> Material.PURPUR_PILLAR;
+            case 18 -> Material.CALCITE;
+            case 19 -> Material.TUFF_BRICKS;
+            case 20 -> Material.DEEPSLATE_TILES;
+            case 21 -> Material.OBSIDIAN;
+            default -> Material.POLISHED_BLACKSTONE;
+        };
+    }
+
+    private void addLevelSignature(World world, int bx, int bz, int level, Random random) {
+        // A recognizable landmark/obstacle unique to each level ID, including each sublevel.
+        int cx = bx + 8, cz = bz + 8, y = floorY + 1;
+        switch (level) {
+            case 0 -> { // endless yellow office maze
+                for (int x = bx + 3; x < bx + 13; x += 3)
+                    for (int z = bz + 3; z < bz + 13; z += 3)
+                        if (!(x == cx || z == cz)) pillar(world, x, z, y, Material.YELLOW_TERRACOTTA, 3);
+            }
+            case 1 -> { // damp sublevel: shallow puddles and broken mossy walls
+                for (int i = 0; i < 5; i++) patch(world, bx + 2 + random.nextInt(11), bz + 2 + random.nextInt(11), y, Material.WATER, 2);
+                pillar(world, cx, cz, y, Material.MOSSY_COBBLESTONE, 4);
+            }
+            case 2 -> { // machine hall
+                for (int x : new int[]{bx + 4, bx + 11}) {
+                    pillar(world, x, cz, y, Material.IRON_BLOCK, 4);
+                    world.getBlockAt(x, floorY + 5, cz).setType(Material.CHAIN, false);
+                }
+            }
+            case 3 -> { // copper relay with redstone wiring
+                for (int i = -3; i <= 3; i++) {
+                    world.getBlockAt(cx + i, y, cz).setType(Material.REDSTONE_BLOCK, false);
+                    world.getBlockAt(cx, y, cz + i).setType(Material.CUT_COPPER, false);
+                }
+                world.getBlockAt(cx, y + 1, cz).setType(Material.LIGHTNING_ROD, false);
+            }
+            case 4 -> { // overgrown greenhouse
+                for (int i = 0; i < 6; i++) {
+                    int x = bx + 2 + random.nextInt(12), z = bz + 2 + random.nextInt(12);
+                    world.getBlockAt(x, y, z).setType(Material.MOSS_BLOCK, false);
+                    world.getBlockAt(x, y + 1, z).setType(Material.OAK_LEAVES, false);
+                    world.getBlockAt(x, y + 2, z).setType(Material.VINE, false);
+                }
+            }
+            case 5 -> { // blackstone ritual chamber
+                for (int i = 0; i < 8; i++) pillar(world, cx + (int)Math.round(3 * Math.cos(i * Math.PI / 4)), cz + (int)Math.round(3 * Math.sin(i * Math.PI / 4)), y, Material.CRYING_OBSIDIAN, 3);
+                world.getBlockAt(cx, y, cz).setType(Material.SOUL_SAND, false);
+            }
+            case 6 -> { // cubicle maze
+                for (int x = bx + 3; x < bx + 13; x += 3)
+                    for (int z = bz + 3; z < bz + 13; z += 4) {
+                        world.getBlockAt(x, y, z).setType(Material.OAK_PLANKS, false);
+                        world.getBlockAt(x, y + 1, z).setType(Material.OAK_PLANKS, false);
+                    }
+            }
+            case 7 -> { // high-security cell block
+                for (int x : new int[]{bx + 3, bx + 12}) for (int z = bz + 3; z < bz + 13; z++)
+                    for (int yy = y; yy < y + 3; yy++) world.getBlockAt(x, yy, z).setType(Material.IRON_BARS, false);
+                world.getBlockAt(cx, y, cz).setType(Material.IRON_DOOR, false);
+            }
+            case 8 -> { // archive stacks
+                for (int x = bx + 3; x < bx + 13; x += 2) {
+                    world.getBlockAt(x, y, bz + 3).setType(Material.BOOKSHELF, false);
+                    world.getBlockAt(x, y, bz + 12).setType(Material.BOOKSHELF, false);
+                }
+            }
+            case 9 -> { // warning-red labyrinth
+                for (int z = bz + 3; z < bz + 13; z++)
+                    if (z % 3 != 0) for (int yy = y; yy < y + 3; yy++) world.getBlockAt(cx, yy, z).setType(Material.RED_NETHER_BRICKS, false);
+            }
+            case 10 -> { // frozen maze
+                for (int i = 0; i < 7; i++) patch(world, bx + 2 + random.nextInt(12), bz + 2 + random.nextInt(12), y, Material.PACKED_ICE, 2);
+            }
+            case 11 -> { // sublevel with slippery ice lanes and blue ice spikes
+                for (int x = bx + 3; x < bx + 13; x += 3) pillar(world, x, cz, y, Material.BLUE_ICE, 4);
+            }
+            case 12 -> { // flooded temple
+                for (int x = bx + 4; x <= bx + 11; x++) for (int z = bz + 4; z <= bz + 11; z++)
+                    if ((x + z) % 3 == 0) world.getBlockAt(x, y, z).setType(Material.WATER, false);
+                for (int x : new int[]{bx + 3, bx + 12}) for (int z : new int[]{bz + 3, bz + 12}) pillar(world, x, z, y, Material.PRISMARINE_BRICKS, 4);
+            }
+            case 13 -> { // dark-prismarine sublevel with narrow raised walkways
+                for (int z = bz + 3; z <= bz + 12; z++) for (int x = bx + 3; x <= bx + 12; x++)
+                    if (x % 3 == 0) world.getBlockAt(x, floorY, z).setType(Material.DARK_PRISMARINE, false);
+            }
+            case 14 -> { // bone ossuary
+                for (int i = 0; i < 7; i++) pillar(world, bx + 2 + i * 2, bz + 4 + (i % 2) * 6, y, Material.BONE_BLOCK, 4);
+            }
+            case 15 -> { // infernal sublevel, occasional magma hazard
+                for (int i = 0; i < 5; i++) patch(world, bx + 2 + random.nextInt(12), bz + 2 + random.nextInt(12), floorY, Material.MAGMA_BLOCK, 2);
+            }
+            case 16 -> { // end-like geometry
+                for (int i = 0; i < 4; i++) pillar(world, bx + 3 + i * 3, bz + 4 + (i % 2) * 6, y, Material.END_STONE_BRICKS, 5);
+            }
+            case 17 -> { // purpur hall with floating columns
+                for (int x = bx + 3; x < bx + 13; x += 3) {
+                    world.getBlockAt(x, y + 2, cz).setType(Material.PURPUR_PILLAR, false);
+                    world.getBlockAt(x, y + 1, cz).setType(Material.CHAIN, false);
+                }
+            }
+            case 18 -> { // pale calcite maze
+                for (int z = bz + 3; z < bz + 13; z += 3)
+                    for (int yy = y; yy < y + 3; yy++) world.getBlockAt(cx, yy, z).setType(Material.CALCITE, false);
+            }
+            case 19 -> { // mud and tuff sublevel
+                for (int i = 0; i < 7; i++) patch(world, bx + 2 + random.nextInt(12), bz + 2 + random.nextInt(12), y, Material.MUD, 2);
+            }
+            case 20 -> { // deep slate catacombs
+                for (int x : new int[]{bx + 4, bx + 11}) for (int z : new int[]{bz + 4, bz + 11}) pillar(world, x, z, y, Material.DEEPSLATE_BRICKS, 5);
+            }
+            case 21 -> { // dangerous magma sublevel
+                for (int i = 0; i < 6; i++) patch(world, bx + 2 + random.nextInt(12), bz + 2 + random.nextInt(12), floorY, Material.MAGMA_BLOCK, 2);
+                pillar(world, cx, cz, y, Material.CRYING_OBSIDIAN, 5);
+            }
+            case 22 -> { // rare exit: obvious but unnerving beacon
+                pillar(world, cx, cz, y, Material.QUARTZ_PILLAR, 5);
+                world.getBlockAt(cx, y + 5, cz).setType(Material.BEACON, false);
+                for (int x = cx - 3; x <= cx + 3; x++) for (int z = cz - 3; z <= cz + 3; z++)
+                    if (Math.abs(x - cx) == 3 || Math.abs(z - cz) == 3) world.getBlockAt(x, y, z).setType(Material.GOLD_BLOCK, false);
+            }
+        }
+    }
+
+    private void pillar(World world, int x, int z, int y, Material material, int height) {
+        for (int yy = 0; yy < height; yy++) world.getBlockAt(x, y + yy, z).setType(material, false);
+    }
+
+    private void patch(World world, int x, int z, int y, Material material, int radius) {
+        for (int dx = -radius; dx <= radius; dx++) for (int dz = -radius; dz <= radius; dz++)
+            if (dx * dx + dz * dz <= radius * radius) world.getBlockAt(x + dx, y, z + dz).setType(material, false);
+    }
+
     private Material wallForTheme(int theme) {
         return switch (theme) { case 1 -> Material.SMOOTH_STONE; case 2 -> Material.DEEPSLATE_BRICKS; case 3 -> Material.BRICKS; case 4 -> Material.MOSSY_COBBLESTONE; case 5 -> Material.POLISHED_BLACKSTONE_BRICKS; default -> Material.YELLOW_TERRACOTTA; };
     }
